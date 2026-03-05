@@ -8,40 +8,40 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Restaurer la session depuis localStorage
     const saved = localStorage.getItem("user");
     if (saved) {
-      try {
-        setUser(JSON.parse(saved));
-      } catch {
-        localStorage.removeItem("user");
-      }
+      try { setUser(JSON.parse(saved)); }
+      catch { localStorage.removeItem("user"); }
     }
     setLoading(false);
   }, []);
 
   const login = async (username, password) => {
-    // Appel POST /api/auth/login
-    await authApi.login(username, password);
-    const userData = { username };
+    const res = await authApi.login(username, password);
+    const userData = {
+      username: res.data.username,
+      role:     res.data.role,         // ✅ ROLE_ADMIN ou ROLE_VENDEUR
+      isAdmin:  res.data.role === "ROLE_ADMIN",
+    };
     setUser(userData);
     localStorage.setItem("user", JSON.stringify(userData));
   };
 
   const logout = async () => {
-    try {
-      await authApi.logout();
-    } catch {
-      // session déjà expirée côté serveur, on continue
-    } finally {
+    try { await authApi.logout(); } catch {}
+    finally {
       setUser(null);
       localStorage.removeItem("user");
       window.location.href = "/login";
     }
   };
 
+  // ✅ Helper pour vérifier le rôle
+  const isAdmin  = () => user?.role === "ROLE_ADMIN";
+  const isVendeur = () => user?.role === "ROLE_VENDEUR";
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, isAdmin, isVendeur }}>
       {children}
     </AuthContext.Provider>
   );

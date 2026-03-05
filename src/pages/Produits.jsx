@@ -5,13 +5,11 @@ import { fournisseurApi } from "../api/fournisseurApi";
 import { Plus, Pencil, Trash2, Search, X, AlertTriangle } from "lucide-react";
 import sharedStyles from "../sharedStyles";
 
-
 const EMPTY = {
   nom: "", reference: "", description: "",
   prixAchat: "", prixVente: "", quantiteStock: "",
   seuilAlerte: "5",
-  categorie: { id: "" },
-  fournisseur: { id: "" },
+  fournisseurId: "",  // ✅ on stocke juste l'id directement comme string
 };
 
 export default function Produits() {
@@ -24,8 +22,14 @@ export default function Produits() {
   const [loading,      setLoading]      = useState(false);
 
   const fetchAll = () => {
-    produitApi.getAll().then((r) => setProduits(r.data)).catch(() => {});
-    fournisseurApi.getAll().then((r) => setFournisseurs(r.data)).catch(() => {});
+    produitApi.getAll()
+      .then((r) => setProduits(r.data))
+      .catch(() => {});
+    fournisseurApi.getAll()
+      .then((r) => {
+        setFournisseurs(r.data);
+      })
+      .catch(() => {});
   };
 
   useEffect(() => { fetchAll(); }, []);
@@ -34,62 +38,70 @@ export default function Produits() {
     `${p.nom} ${p.reference}`.toLowerCase().includes(search.toLowerCase())
   );
 
-  const openCreate = () => { setEditing(null); setForm(EMPTY); setModal(true); };
-  const openEdit   = (p) => {
+  const openCreate = () => {
+    setEditing(null);
+    setForm(EMPTY);
+    setModal(true);
+  };
+
+  const openEdit = (p) => {
     setEditing(p.id);
     setForm({
-      nom: p.nom, reference: p.reference, description: p.description || "",
-      prixAchat: p.prixAchat, prixVente: p.prixVente,
-      quantiteStock: p.quantiteStock, seuilAlerte: p.seuilAlerte,
-      categorie: { id: "" },
-      fournisseur: { id: p.fournisseur?.id || "" },
+      nom:           p.nom           || "",
+      reference:     p.reference     || "",
+      description:   p.description   || "",
+      prixAchat:     p.prixAchat     || "",
+      prixVente:     p.prixVente     || "",
+      quantiteStock: p.quantiteStock || "",
+      seuilAlerte:   p.seuilAlerte   || "5",
+      fournisseurId: p.fournisseur?.id
+        ? String(p.fournisseur.id)   // ✅ convertir en string pour le select
+        : "",
     });
     setModal(true);
   };
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  setLoading(true);
 
-  // ✅ Nettoyage des données avant envoi
-  const payload = {
-    nom:           form.nom,
-    reference:     form.reference || null,
-    description:   form.description || null,
-    prixAchat:     parseFloat(form.prixAchat)     || 0,
-    prixVente:     parseFloat(form.prixVente)      || 0,
-    quantiteStock: parseInt(form.quantiteStock)    || 0,
-    seuilAlerte:   parseInt(form.seuilAlerte)      || 5,
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
 
-    // ✅ null si pas sélectionné
-    categorie:   null,
-    fournisseur: form.fournisseur.id
-      ? { id: parseInt(form.fournisseur.id) }
-      : null,
-  };
+    const payload = {
+      nom:           form.nom,
+      reference:     form.reference   || null,
+      description:   form.description || null,
+      prixAchat:     parseFloat(form.prixAchat)     || 0,
+      prixVente:     parseFloat(form.prixVente)      || 0,
+      quantiteStock: parseInt(form.quantiteStock)    || 0,
+      seuilAlerte:   parseInt(form.seuilAlerte)      || 5,
+      categorie:     null,
+      // ✅ Fournisseur correctement formaté
+      fournisseur:   form.fournisseurId
+        ? { id: parseInt(form.fournisseurId) }
+        : null,
+    };
 
-  console.log("Payload envoyé :", payload); // debug
+    console.log("Payload envoyé :", payload);
 
-  try {
-    if (editing) {
-      await produitApi.update(editing, payload);
-      toast.success("Produit modifié");
-    } else {
-      await produitApi.create(payload);
-      toast.success("Produit créé");
+    try {
+      if (editing) {
+        await produitApi.update(editing, payload);
+        toast.success("Produit modifié");
+      } else {
+        await produitApi.create(payload);
+        toast.success("Produit créé");
+      }
+      setModal(false);
+      fetchAll();
+    } catch (err) {
+      const msg = err.response?.data?.message
+        || err.response?.data
+        || "Erreur lors de l'enregistrement";
+      toast.error(String(msg));
+      console.error("Erreur backend :", err.response?.data);
+    } finally {
+      setLoading(false);
     }
-    setModal(false);
-    fetchAll();
-  } catch (err) {
-    // ✅ Affiche le vrai message d'erreur du backend
-    const msg = err.response?.data?.message
-      || err.response?.data
-      || "Erreur lors de l'enregistrement";
-    toast.error(String(msg));
-    console.error("Erreur backend :", err.response?.data);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   const handleDelete = async (id) => {
     if (!window.confirm("Supprimer ce produit ?")) return;
@@ -106,9 +118,11 @@ const handleSubmit = async (e) => {
     if (p.quantiteStock === 0)
       return { label: "Rupture", color: "#ef4444", bg: "#ef444420" };
     if (p.quantiteStock <= p.seuilAlerte)
-      return { label: "Alerte", color: "#f97316", bg: "#f9731620" };
-    return { label: "OK", color: "#10b981", bg: "#10b98120" };
+      return { label: "Alerte",  color: "#f97316", bg: "#f9731620" };
+    return   { label: "OK",      color: "#10b981", bg: "#10b98120" };
   };
+
+  const s = sharedStyles();
 
   return (
     <div>
@@ -122,14 +136,21 @@ const handleSubmit = async (e) => {
         </button>
       </div>
 
+      {/* Recherche */}
       <div style={s.searchWrap}>
         <Search size={16} color="#64748b" />
-        <input style={s.searchInput} placeholder="Rechercher par nom, référence..."
-          value={search} onChange={(e) => setSearch(e.target.value)} />
-        {search && <button style={s.clearBtn} onClick={() => setSearch("")}>
-          <X size={14} /></button>}
+        <input style={s.searchInput}
+          placeholder="Rechercher par nom, référence..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)} />
+        {search && (
+          <button style={s.clearBtn} onClick={() => setSearch("")}>
+            <X size={14} />
+          </button>
+        )}
       </div>
 
+      {/* Tableau */}
       <div style={s.tableWrap}>
         <table style={s.table}>
           <thead>
@@ -142,25 +163,29 @@ const handleSubmit = async (e) => {
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={9} style={s.empty}>Aucun produit trouvé</td></tr>
+              <tr>
+                <td colSpan={9} style={s.empty}>Aucun produit trouvé</td>
+              </tr>
             ) : filtered.map((p) => {
               const { label, color, bg } = getStatutBadge(p);
               return (
                 <tr key={p.id} style={s.tr}
-                  onMouseEnter={(e) => e.currentTarget.style.background="#1e3a5f20"}
-                  onMouseLeave={(e) => e.currentTarget.style.background="transparent"}
+                  onMouseEnter={(e) =>
+                    e.currentTarget.style.background = "#1e3a5f20"}
+                  onMouseLeave={(e) =>
+                    e.currentTarget.style.background = "transparent"}
                 >
-                  <td style={s.td}><span style={s.badge}>{p.reference}</span></td>
-                  <td style={{...s.td, fontWeight: 600}}>{p.nom}</td>
+                  <td style={s.td}>
+                    <span style={s.badge}>{p.reference}</span>
+                  </td>
+                  <td style={{ ...s.td, fontWeight: 600 }}>{p.nom}</td>
                   <td style={s.td}>{p.prixAchat?.toLocaleString()} F</td>
                   <td style={s.td}>{p.prixVente?.toLocaleString()} F</td>
                   <td style={s.td}>{p.quantiteStock}</td>
                   <td style={s.td}>{p.seuilAlerte}</td>
                   <td style={s.td}>{p.fournisseur?.nom || "—"}</td>
                   <td style={s.td}>
-                    <span style={{
-                      ...s.statusBadge, color, background: bg
-                    }}>
+                    <span style={{ ...s.statusBadge, color, background: bg }}>
                       {label === "Alerte" && <AlertTriangle size={11} />}
                       {label}
                     </span>
@@ -170,7 +195,8 @@ const handleSubmit = async (e) => {
                       <button style={s.btnEdit} onClick={() => openEdit(p)}>
                         <Pencil size={14} />
                       </button>
-                      <button style={s.btnDel} onClick={() => handleDelete(p.id)}>
+                      <button style={s.btnDel}
+                        onClick={() => handleDelete(p.id)}>
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -182,9 +208,10 @@ const handleSubmit = async (e) => {
         </table>
       </div>
 
+      {/* Modal */}
       {modal && (
         <div style={s.overlay} onClick={() => setModal(false)}>
-          <div style={{...s.modal, maxWidth: 560}}
+          <div style={{ ...s.modal, maxWidth: 560 }}
             onClick={(e) => e.stopPropagation()}>
             <div style={s.modalHeader}>
               <h2 style={s.modalTitle}>
@@ -194,74 +221,105 @@ const handleSubmit = async (e) => {
                 <X size={18} />
               </button>
             </div>
+
             <form onSubmit={handleSubmit} style={s.formGrid}>
               <div style={s.field}>
                 <label style={s.label}>Nom *</label>
                 <input style={s.input} value={form.nom} required
-                  onChange={(e) => setForm({...form, nom: e.target.value})}
-                  onFocus={(e) => e.target.style.borderColor="#f59e0b"}
-                  onBlur={(e)  => e.target.style.borderColor="#334155"} />
+                  onChange={(e) => setForm({ ...form, nom: e.target.value })}
+                  onFocus={(e) => e.target.style.borderColor = "#f59e0b"}
+                  onBlur={(e)  => e.target.style.borderColor = "#334155"} />
               </div>
+
               <div style={s.field}>
                 <label style={s.label}>Référence</label>
                 <input style={s.input} value={form.reference}
-                  onChange={(e) => setForm({...form, reference: e.target.value})}
-                  onFocus={(e) => e.target.style.borderColor="#f59e0b"}
-                  onBlur={(e)  => e.target.style.borderColor="#334155"} />
+                  onChange={(e) => setForm({ ...form, reference: e.target.value })}
+                  onFocus={(e) => e.target.style.borderColor = "#f59e0b"}
+                  onBlur={(e)  => e.target.style.borderColor = "#334155"} />
               </div>
+
               <div style={s.field}>
                 <label style={s.label}>Prix Achat *</label>
                 <input style={s.input} type="number" value={form.prixAchat} required
-                  onChange={(e) => setForm({...form, prixAchat: e.target.value})}
-                  onFocus={(e) => e.target.style.borderColor="#f59e0b"}
-                  onBlur={(e)  => e.target.style.borderColor="#334155"} />
+                  onChange={(e) => setForm({ ...form, prixAchat: e.target.value })}
+                  onFocus={(e) => e.target.style.borderColor = "#f59e0b"}
+                  onBlur={(e)  => e.target.style.borderColor = "#334155"} />
               </div>
+
               <div style={s.field}>
                 <label style={s.label}>Prix Vente *</label>
                 <input style={s.input} type="number" value={form.prixVente} required
-                  onChange={(e) => setForm({...form, prixVente: e.target.value})}
-                  onFocus={(e) => e.target.style.borderColor="#f59e0b"}
-                  onBlur={(e)  => e.target.style.borderColor="#334155"} />
+                  onChange={(e) => setForm({ ...form, prixVente: e.target.value })}
+                  onFocus={(e) => e.target.style.borderColor = "#f59e0b"}
+                  onBlur={(e)  => e.target.style.borderColor = "#334155"} />
               </div>
+
               <div style={s.field}>
                 <label style={s.label}>Stock initial</label>
                 <input style={s.input} type="number" value={form.quantiteStock}
-                  onChange={(e) => setForm({...form, quantiteStock: e.target.value})}
-                  onFocus={(e) => e.target.style.borderColor="#f59e0b"}
-                  onBlur={(e)  => e.target.style.borderColor="#334155"} />
+                  onChange={(e) =>
+                    setForm({ ...form, quantiteStock: e.target.value })}
+                  onFocus={(e) => e.target.style.borderColor = "#f59e0b"}
+                  onBlur={(e)  => e.target.style.borderColor = "#334155"} />
               </div>
+
               <div style={s.field}>
                 <label style={s.label}>Seuil alerte</label>
                 <input style={s.input} type="number" value={form.seuilAlerte}
-                  onChange={(e) => setForm({...form, seuilAlerte: e.target.value})}
-                  onFocus={(e) => e.target.style.borderColor="#f59e0b"}
-                  onBlur={(e)  => e.target.style.borderColor="#334155"} />
-              </div>
-              <div style={{...s.field, gridColumn: "1 / -1"}}>
-                <label style={s.label}>Fournisseur</label>
-                <select style={s.input}
-                  value={form.fournisseur.id}
                   onChange={(e) =>
-                    setForm({...form, fournisseur: { id: e.target.value }})}>
-                  <option value="">-- Sélectionner --</option>
+                    setForm({ ...form, seuilAlerte: e.target.value })}
+                  onFocus={(e) => e.target.style.borderColor = "#f59e0b"}
+                  onBlur={(e)  => e.target.style.borderColor = "#334155"} />
+              </div>
+
+              {/* ✅ Select fournisseur corrigé */}
+              <div style={{ ...s.field, gridColumn: "1 / -1" }}>
+                <label style={s.label}>
+                  Fournisseur{" "}
+                  <span style={{ color: "#64748b", fontWeight: 400 }}>
+                    ({fournisseurs.length} disponible(s))
+                  </span>
+                </label>
+                <select
+                  style={s.input}
+                  value={form.fournisseurId}        // ✅ string directement
+                  onChange={(e) =>
+                    setForm({ ...form, fournisseurId: e.target.value })
+                  }
+                >
+                  <option value="">-- Aucun fournisseur --</option>
                   {fournisseurs.map((f) => (
-                    <option key={f.id} value={f.id}>{f.nom}</option>
+                    <option
+                      key={f.id}
+                      value={String(f.id)}           // ✅ string pour correspondre
+                    >
+                      {f.nom} {f.tel ? `— ${f.tel}` : ""}
+                    </option>
                   ))}
                 </select>
               </div>
-              <div style={{...s.field, gridColumn: "1 / -1"}}>
+
+              <div style={{ ...s.field, gridColumn: "1 / -1" }}>
                 <label style={s.label}>Description</label>
-                <textarea style={{...s.input, resize: "vertical", minHeight: 70}}
+                <textarea
+                  style={{ ...s.input, resize: "vertical", minHeight: 70 }}
                   value={form.description}
-                  onChange={(e) => setForm({...form, description: e.target.value})}
-                  onFocus={(e) => e.target.style.borderColor="#f59e0b"}
-                  onBlur={(e)  => e.target.style.borderColor="#334155"} />
+                  onChange={(e) =>
+                    setForm({ ...form, description: e.target.value })}
+                  onFocus={(e) => e.target.style.borderColor = "#f59e0b"}
+                  onBlur={(e)  => e.target.style.borderColor = "#334155"}
+                />
               </div>
-              <div style={{...s.modalFooter, gridColumn: "1 / -1"}}>
+
+              <div style={{ ...s.modalFooter, gridColumn: "1 / -1" }}>
                 <button type="button" style={s.btnCancel}
-                  onClick={() => setModal(false)}>Annuler</button>
+                  onClick={() => setModal(false)}>
+                  Annuler
+                </button>
                 <button type="submit" style={s.btnPrimary} disabled={loading}>
-                  {loading ? "..." : "Enregistrer"}</button>
+                  {loading ? "..." : "Enregistrer"}
+                </button>
               </div>
             </form>
           </div>
@@ -270,5 +328,3 @@ const handleSubmit = async (e) => {
     </div>
   );
 }
-
-const s = sharedStyles();

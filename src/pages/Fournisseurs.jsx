@@ -30,24 +30,42 @@ export default function Fournisseurs() {
     setForm({ nom: f.nom, email: f.email, tel: f.tel, adresse: f.adresse });
     setModal(true);
   };
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setLoading(true);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      editing
-        ? await fournisseurApi.update(editing, form)
-        : await fournisseurApi.create(form);
-      toast.success(editing ? "Fournisseur modifié" : "Fournisseur créé");
-      setModal(false);
-      fetchAll();
-    } catch {
-      toast.error("Erreur lors de l'enregistrement");
-    } finally {
-      setLoading(false);
-    }
+  // ✅ Nettoyage des données
+  const payload = {
+    nom:     form.nom.trim(),
+    email:   form.email.trim()   || null,
+    tel:     form.tel.trim()     || null,
+    adresse: form.adresse.trim() || null,
   };
 
+  console.log("Payload envoyé :", payload); // debug
+
+  try {
+    if (editing) {
+      await fournisseurApi.update(editing, payload);
+      toast.success("Fournisseur modifié");
+    } else {
+      await fournisseurApi.create(payload);
+      toast.success("Fournisseur créé");
+    }
+    setModal(false);
+    fetchAll();
+  } catch (err) {
+    // ✅ Affiche le vrai message d'erreur backend
+    const msg = err.response?.data?.message
+      || err.response?.data
+      || err.message
+      || "Erreur lors de l'enregistrement";
+    toast.error(String(msg));
+    console.error("Erreur complète :", err.response?.data);
+  } finally {
+    setLoading(false);
+  }
+};
   const handleDelete = async (id) => {
     if (!window.confirm("Supprimer ce fournisseur ?")) return;
     try {

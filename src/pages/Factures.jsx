@@ -1,21 +1,32 @@
+// ─── pages/Factures.jsx ───────────────────────────────────────────────────────
 import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { factureApi } from "../api/factureApi";
-import { clientApi }  from "../api/clientApi";
+import { clientApi  } from "../api/clientApi";
 import { produitApi } from "../api/produitApi";
-import { Plus, Download, X} from "lucide-react";
+import { Plus, Download, Printer, Trash2, X, Search } from "lucide-react";
 import sharedStyles from "../sharedStyles";
-
+import Pagination from "../components/Pagination";
+import usePagination from "../hooks/usePagination";
+import { useConfirm } from "../components/ConfirmModal";
+import { useAuth } from "../context/AuthContext";
 
 const STATUTS = ["EN_ATTENTE", "PAYEE", "ANNULEE"];
 
 export default function Factures() {
-  const [factures,  setFactures]  = useState([]);
-  const [clients,   setClients]   = useState([]);
-  const [produits,  setProduits]  = useState([]);
-  const [modal,     setModal]     = useState(false);
-  const [loading,   setLoading]   = useState(false);
-  const [filterSt,  setFilterSt]  = useState("");
+  const [factures, setFactures] = useState([]);
+  const [clients,  setClients]  = useState([]);
+  const [produits, setProduits] = useState([]);
+  const [modal,    setModal]    = useState(false);
+  const [loading,  setLoading]  = useState(false);
+  const [filterSt, setFilterSt] = useState("");
+  const [search,   setSearch]   = useState("");
+  const [dateDebut, setDateDebut] = useState("");
+  const [dateFin,   setDateFin]   = useState("");
+
+  const { user } = useAuth();
+  const isAdmin  = user?.role === "ROLE_ADMIN";
+  const { confirm, ConfirmModal } = useConfirm();
 
   const [form, setForm] = useState({
     clientId: "",
@@ -30,9 +41,19 @@ export default function Factures() {
 
   useEffect(() => { fetchAll(); }, []);
 
-  const filtered = filterSt
-    ? factures.filter((f) => f.statut === filterSt)
-    : factures;
+  const filtered = factures.filter((f) => {
+    const matchStatut = !filterSt || f.statut === filterSt;
+    const matchSearch = !search   ||
+      f.numeroFacture?.toLowerCase().includes(search.toLowerCase()) ||
+      `${f.client?.prenom} ${f.client?.nom}`
+        .toLowerCase().includes(search.toLowerCase());
+    const matchDebut  = !dateDebut || f.dateFacture >= dateDebut;
+    const matchFin    = !dateFin   || f.dateFacture <= dateFin;
+    return matchStatut && matchSearch && matchDebut && matchFin;
+  });
+
+  const { page, setPage, paginated, totalPages, total } =
+    usePagination(filtered, 15);
 
   const addLigne = () =>
     setForm({ ...form, lignes: [...form.lignes, { produitId: "", quantite: 1 }] });
@@ -46,13 +67,11 @@ export default function Factures() {
     setForm({ ...form, lignes });
   };
 
-  const calcTotal = () => {
-    const st = form.lignes.reduce((acc, l) => {
+  const calcTotal = () =>
+    form.lignes.reduce((acc, l) => {
       const p = produits.find((p) => p.id === parseInt(l.produitId));
       return acc + (p ? p.prixVente * (l.quantite || 0) : 0);
     }, 0);
-    return { sousTotal: st, tva: st * 0.18, total: st * 1.18 };
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -91,17 +110,45 @@ export default function Factures() {
     }
   };
 
+  const handleDelete = async (facture) => {
+    const ok = await confirm({
+      title:   "Supprimer cette facture ?",
+      message: `${facture.numeroFacture} — ${facture.client?.prenom} ${facture.client?.nom} sera supprimée définitivement.`,
+      danger:  true,
+    });
+    if (!ok) return;
+    try {
+      await factureApi.delete(facture.id);
+      toast.success("Facture supprimée");
+      fetchAll();
+    } catch {
+      toast.error("Erreur suppression");
+    }
+  };
+
   const handlePDF = async (id, numero) => {
     try {
       const res = await factureApi.downloadPDF(id);
       const url = URL.createObjectURL(res.data);
       const a   = document.createElement("a");
-      a.href     = url;
-      a.download = `${numero}.pdf`;
+      a.href = url; a.download = `${numero}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
       toast.error("Erreur téléchargement PDF");
+    }
+  };
+
+  // ✅ Impression directe dans le navigateur
+  const handlePrint = async (id) => {
+    try {
+      const res = await factureApi.downloadPDF(id);
+      const url = URL.createObjectURL(res.data);
+      const win = window.open(url, "_blank");
+      win.addEventListener("load", () => { win.focus(); win.print(); });
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      toast.error("Erreur impression");
     }
   };
 
@@ -111,10 +158,13 @@ export default function Factures() {
     ANNULEE:    { color: "#ef4444", bg: "#ef444420" },
   }[st] || { color: "#64748b", bg: "#64748b20" });
 
-  const { sousTotal, tva, total } = calcTotal();
+  const totalForm = calcTotal();
+  const s = sharedStyles();
 
   return (
     <div>
+      <ConfirmModal />
+
       <div style={s.pageHeader}>
         <div>
           <h1 style={s.pageTitle}>Factures</h1>
@@ -125,52 +175,84 @@ export default function Factures() {
         </button>
       </div>
 
-      {/* Filtre statut */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+      {/* Filtres statut */}
+      <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap" }}>
         {["", ...STATUTS].map((st) => (
-          <button key={st} onClick={() => setFilterSt(st)}
+          <button key={st} onClick={() => { setFilterSt(st); setPage(1); }}
             style={{
-              ...s.filterBtn,
               background: filterSt === st ? "#f59e0b" : "#1e293b",
               color:      filterSt === st ? "#0f172a" : "#94a3b8",
+              border: "1px solid #334155", borderRadius: 8,
+              padding: "6px 14px", fontSize: 12,
+              fontWeight: 600, cursor: "pointer",
             }}>
             {st || "Tous"}
           </button>
         ))}
       </div>
 
+      {/* Recherche + filtre dates */}
+      <div style={{ display:"flex", gap:10, marginBottom:20, flexWrap:"wrap" }}>
+        <div style={{ ...s.searchWrap, flex:1, minWidth:200 }}>
+          <Search size={14} color="#64748b" />
+          <input style={s.searchInput}
+            placeholder="N° facture ou nom client..."
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          {search && (
+            <button style={s.clearBtn} onClick={() => setSearch("")}>
+              <X size={13} />
+            </button>
+          )}
+        </div>
+
+        {/* ✅ Filtres date */}
+        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+          <span style={{ color:"#64748b", fontSize:12 }}>Du</span>
+          <input type="date" value={dateDebut}
+            onChange={(e) => { setDateDebut(e.target.value); setPage(1); }}
+            style={loc.dateInput} />
+          <span style={{ color:"#64748b", fontSize:12 }}>Au</span>
+          <input type="date" value={dateFin}
+            onChange={(e) => { setDateFin(e.target.value); setPage(1); }}
+            style={loc.dateInput} />
+          {(dateDebut || dateFin) && (
+            <button style={{ ...s.clearBtn, padding:"4px 8px" }}
+              onClick={() => { setDateDebut(""); setDateFin(""); setPage(1); }}>
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Tableau */}
       <div style={s.tableWrap}>
         <table style={s.table}>
           <thead>
             <tr>
-              {["N° Facture","Date","Client","Sous-total","TVA","Total","Statut","Actions"].map((h) => (
+              {["N° Facture","Date","Client","Total","Statut","Actions"].map((h) => (
                 <th key={h} style={s.th}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
-              <tr><td colSpan={8} style={s.empty}>Aucune facture</td></tr>
-            ) : filtered.map((f) => {
+            {paginated.length === 0 ? (
+              <tr><td colSpan={6} style={s.empty}>Aucune facture trouvée</td></tr>
+            ) : paginated.map((f) => {
               const { color, bg } = statutColor(f.statut);
               return (
                 <tr key={f.id} style={s.tr}
-                  onMouseEnter={(e) => e.currentTarget.style.background="#1e3a5f20"}
-                  onMouseLeave={(e) => e.currentTarget.style.background="transparent"}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "#1e3a5f20"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 >
                   <td style={s.td}><span style={s.badge}>{f.numeroFacture}</span></td>
                   <td style={s.td}>{f.dateFacture}</td>
-                  <td style={s.td}>
-                    {f.client?.prenom} {f.client?.nom}
-                  </td>
-                  <td style={s.td}>{f.sousTotal?.toLocaleString()} F</td>
-                  <td style={s.td}>{(f.sousTotal*0.18)?.toLocaleString()} F</td>
-                  <td style={{...s.td, fontWeight: 700, color: "#f59e0b"}}>
-                    {f.total?.toLocaleString()} F
+                  <td style={s.td}>{f.client?.prenom} {f.client?.nom}</td>
+                  <td style={{ ...s.td, fontWeight:700, color:"#f59e0b" }}>
+                    {f.sousTotal?.toLocaleString()} F
                   </td>
                   <td style={s.td}>
-                    <select
-                      value={f.statut}
+                    <select value={f.statut}
                       onChange={(e) => handleStatut(f.id, e.target.value)}
                       style={{
                         background: bg, color,
@@ -184,23 +266,41 @@ export default function Factures() {
                     </select>
                   </td>
                   <td style={s.td}>
-                    <button style={s.btnEdit}
-                      onClick={() => handlePDF(f.id, f.numeroFacture)}
-                      title="Télécharger PDF">
-                      <Download size={14} />
-                    </button>
+                    <div style={s.actions}>
+                      {/* ✅ Imprimer */}
+                      <button style={{ ...s.btnEdit, color:"#10b981" }}
+                        title="Imprimer" onClick={() => handlePrint(f.id)}>
+                        <Printer size={14} />
+                      </button>
+                      {/* Télécharger */}
+                      <button style={s.btnEdit}
+                        title="Télécharger PDF"
+                        onClick={() => handlePDF(f.id, f.numeroFacture)}>
+                        <Download size={14} />
+                      </button>
+                      {/* Supprimer ADMIN */}
+                      {isAdmin && (
+                        <button style={s.btnDel}
+                          title="Supprimer"
+                          onClick={() => handleDelete(f)}>
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        <Pagination page={page} totalPages={totalPages}
+          onChange={setPage} total={total} />
       </div>
 
-      {/* Modal création facture */}
+      {/* Modal création */}
       {modal && (
         <div style={s.overlay} onClick={() => setModal(false)}>
-          <div style={{...s.modal, maxWidth: 640}}
+          <div style={{ ...s.modal, maxWidth:640 }}
             onClick={(e) => e.stopPropagation()}>
             <div style={s.modalHeader}>
               <h2 style={s.modalTitle}>Nouvelle facture</h2>
@@ -208,13 +308,11 @@ export default function Factures() {
                 <X size={18} />
               </button>
             </div>
-
             <form onSubmit={handleSubmit}>
-              {/* Client */}
-              <div style={{...s.field, marginBottom: 20}}>
+              <div style={{ ...s.field, marginBottom:20 }}>
                 <label style={s.label}>Client *</label>
                 <select style={s.input} value={form.clientId}
-                  onChange={(e) => setForm({...form, clientId: e.target.value})}>
+                  onChange={(e) => setForm({ ...form, clientId: e.target.value })}>
                   <option value="">-- Sélectionner un client --</option>
                   {clients.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -224,31 +322,25 @@ export default function Factures() {
                 </select>
               </div>
 
-              {/* Lignes */}
-              <p style={{...s.label, marginBottom: 10}}>Lignes de facture</p>
+              <p style={{ ...s.label, marginBottom:10 }}>Produits</p>
               {form.lignes.map((ligne, i) => {
-                const produit = produits.find(
-                  (p) => p.id === parseInt(ligne.produitId));
-                const stLigne = produit
-                  ? produit.prixVente * ligne.quantite : 0;
+                const produit = produits.find((p) => p.id === parseInt(ligne.produitId));
+                const stLigne = produit ? produit.prixVente * (ligne.quantite || 0) : 0;
                 return (
-                  <div key={i} style={styles.ligneRow}>
-                    <select style={{...s.input, flex: 2}}
-                      value={ligne.produitId}
+                  <div key={i} style={loc.ligneRow}>
+                    <select style={{ ...s.input, flex:2 }} value={ligne.produitId}
                       onChange={(e) => updateLigne(i, "produitId", e.target.value)}>
                       <option value="">-- Produit --</option>
                       {produits.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.nom} ({p.quantiteStock} en stock)
+                          {p.nom} — {p.prixVente?.toLocaleString()} F ({p.quantiteStock} en stock)
                         </option>
                       ))}
                     </select>
-                    <input style={{...s.input, flex: 1, width: 80}}
+                    <input style={{ ...s.input, width:80 }}
                       type="number" min="1" value={ligne.quantite}
                       onChange={(e) => updateLigne(i, "quantite", e.target.value)} />
-                    <span style={styles.ligneTotal}>
-                      {stLigne.toLocaleString()} F
-                    </span>
+                    <span style={loc.ligneTotal}>{stLigne.toLocaleString()} F</span>
                     {form.lignes.length > 1 && (
                       <button type="button" style={s.btnDel}
                         onClick={() => removeLigne(i)}>
@@ -260,30 +352,20 @@ export default function Factures() {
               })}
 
               <button type="button" onClick={addLigne}
-                style={{...s.btnCancel, marginTop: 8, fontSize: 13}}>
+                style={{ ...s.btnCancel, marginTop:8, fontSize:13 }}>
                 + Ajouter une ligne
               </button>
 
-              {/* Totaux */}
-              <div style={styles.totalBox}>
-                <div style={styles.totalRow}>
-                  <span style={{color:"#94a3b8"}}>Sous-total HT</span>
-                  <span>{sousTotal.toLocaleString()} F</span>
-                </div>
-                <div style={styles.totalRow}>
-                  <span style={{color:"#94a3b8"}}>TVA 18%</span>
-                  <span>{tva.toLocaleString()} F</span>
-                </div>
-                <div style={{...styles.totalRow, borderTop:"1px solid #334155",
-                  paddingTop:10, marginTop:4}}>
-                  <span style={{fontWeight:700, color:"#f1f5f9"}}>Total TTC</span>
-                  <span style={{fontWeight:700, color:"#f59e0b", fontSize:18}}>
-                    {total.toLocaleString()} F
+              <div style={loc.totalBox}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontWeight:700, color:"#f1f5f9", fontSize:15 }}>Total</span>
+                  <span style={{ fontWeight:700, color:"#f59e0b", fontSize:20 }}>
+                    {totalForm.toLocaleString()} F
                   </span>
                 </div>
               </div>
 
-              <div style={{...s.modalFooter, marginTop: 20}}>
+              <div style={{ ...s.modalFooter, marginTop:20 }}>
                 <button type="button" style={s.btnCancel}
                   onClick={() => setModal(false)}>Annuler</button>
                 <button type="submit" style={s.btnPrimary} disabled={loading}>
@@ -298,24 +380,13 @@ export default function Factures() {
   );
 }
 
-const styles = {
-  ligneRow: {
-    display: "flex", alignItems: "center",
-    gap: 8, marginBottom: 8,
+const loc = {
+  dateInput: {
+    background:"#1e293b", border:"1px solid #334155",
+    borderRadius:8, padding:"7px 10px",
+    color:"#f1f5f9", fontSize:12, outline:"none",
   },
-  ligneTotal: {
-    color: "#f59e0b", fontWeight: 600,
-    minWidth: 100, textAlign: "right", fontSize: 13,
-  },
-  totalBox: {
-    background: "#0f172a", borderRadius: 10,
-    padding: "16px 20px", marginTop: 16,
-    display: "flex", flexDirection: "column", gap: 8,
-  },
-  totalRow: {
-    display: "flex", justifyContent: "space-between",
-    color: "#f1f5f9", fontSize: 14,
-  },
+  ligneRow: { display:"flex", alignItems:"center", gap:8, marginBottom:8 },
+  ligneTotal: { color:"#f59e0b", fontWeight:600, minWidth:110, textAlign:"right", fontSize:13 },
+  totalBox: { background:"#0f172a", borderRadius:10, padding:"16px 20px", marginTop:16 },
 };
-
-const s = sharedStyles();
